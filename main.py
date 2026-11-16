@@ -792,7 +792,9 @@ def main() -> int:
         json.dump(report, stream, ensure_ascii=False, indent=2)
     best_index = int(report.get("auto_selected_candidate_index", 0))
     _finalize_run_outputs(run_dir, selected_candidates[best_index], selected_reports[best_index], config)
-    print(f"\n结果已写入: {run_dir}")
+    print(f"\n结果目录: {run_dir}")
+    print(f"日志文件: {run_dir / 'run.log'}")
+    print((run_dir / "run.log").read_text(encoding="utf-8"))
     return 0
 
 
