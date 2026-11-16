@@ -356,7 +356,7 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
     for hole in report.get("holes", []):
         if hole.get("excluded_by_area", False):
             continue
-        source = Path(hole["voxel_output"])
+        source = run_dir / f"hole_{int(hole['hole_index']):02d}_pseudo_points.pcd"
         if source.exists():
             shutil.copy2(source, run_dir / f"hole_{int(hole['hole_index']):02d}_pseudo_points.pcd")
 
