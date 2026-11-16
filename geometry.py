@@ -230,12 +230,13 @@ def build_outer_mask(
 ) -> tuple[np.ndarray, list[np.ndarray], str]:
     """Build an outer panel mask, using alpha shape then convex hull fallback."""
 
-    if str(mode).lower() == "bbox":
+    if str(mode).lower() in {"bbox", "paired_face_bbox", "structural_intersection"}:
         mask = np.ones((len(u_centers), len(v_centers)), dtype=bool)
         low_u, high_u = float(u_centers[0]), float(u_centers[-1])
         low_v, high_v = float(v_centers[0]), float(v_centers[-1])
         bbox = np.array([[low_u, low_v], [high_u, low_v], [high_u, high_v], [low_u, high_v]])
-        return mask, [bbox], "bbox"
+        method = "structural_intersection_bbox" if str(mode).lower() == "structural_intersection" else "bbox"
+        return mask, [bbox], method
 
     loops = alpha_shape_loops(
         boundary_points,

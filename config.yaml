@@ -84,7 +84,7 @@ hole:
   alpha_max_edge_length: 1.00
   alpha_max_input_points: 8000
   min_alpha_to_hull_ratio: 0.95
-  outer_mode: bbox
+  outer_mode: structural_intersection
 
   # 成对平面可直接得到厚度。单面候选才会使用下面这个配置值。
   single_face_default_thickness: 0.08

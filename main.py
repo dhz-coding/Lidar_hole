@@ -364,6 +364,7 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
         f"excluded_hole_count: {sum(item.get('excluded_by_area', False) for item in report['holes'])}",
         f"exclude_area_m2: {config.get('hole', {}).get('exclude_area_m2', 1.0)}",
         f"total_volume_m3: {report['total_volume_m3']:.6f}",
+        f"rough_total_volume_m3: {report.get('rough_total_volume_m3', report['total_volume_m3']):.6f}",
         "outputs: partition_face_01.pcd, partition_face_02.pcd or partition_face_02_estimated.pcd, partition_plane_group.pcd, partition_slab_points.pcd",
     ]
     (run_dir / "run.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
@@ -463,11 +464,13 @@ def analyse_candidate(
     combined_hole_mask = np.zeros_like(hole_mask, dtype=bool)
     hole_reports = []
     total_volume = 0.0
+    rough_total_volume = 0.0
     exclude_area_m2 = float(hole_cfg.get("exclude_area_m2", 1.0))
     exclude_rule = str(hole_cfg.get("exclude_area_rule", "less_equal")).lower()
     for hole_index, component in enumerate(components, start=1):
         combined_hole_mask[component.cells[:, 0], component.cells[:, 1]] = True
         volume = component.area * thickness
+        rough_total_volume += volume
         excluded = (
             component.area <= exclude_area_m2
             if exclude_rule in {"less_equal", "le", "below"}
@@ -590,6 +593,7 @@ def analyse_candidate(
         "holes": hole_reports,
         "hole_count": len(hole_reports),
         "total_volume_m3": float(total_volume),
+        "rough_total_volume_m3": float(rough_total_volume),
         "selection_score": float(selection_score),
         "outputs": {
             "candidate_dir": str(candidate_dir),
