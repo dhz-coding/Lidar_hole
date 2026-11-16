@@ -70,3 +70,5 @@ python main.py --config config.yaml --candidate-index -1
 
 本次示例运行识别到 y 方向约 `-31.65 m` 的内部平面，检测到 3 个边界相接的空白连通域，按 YAML 中的 `0.08 m` 单面厚度估计总量约 `1.220736 m³`。请先查看 `candidate_06_y/grid_diagnostic.png` 和对应的体素化 PCD，再决定是否接受边界相接区域作为孔洞。报告中的 `touches_outer_boundary` 会保留这个判断依据。
 
+当前默认只保留闭合洞口。空白区域如果接触隔板外轮廓，会被排除，避免把隔板外部空间误生成伪点。
+

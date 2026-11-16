@@ -77,7 +77,8 @@ hole:
   min_boundary_support_cells: 8
   # 采砂船隔板下缘的开口可能与外轮廓相接。此时允许边界连通域参与候选，
   # 仍要求它有足够实体边界支持。
-  reject_touching_outer_boundary: false
+  # 只计算闭合洞口。与隔板外轮廓相连的大空区不作为洞。
+  reject_touching_outer_boundary: true
 
   # 外轮廓默认使用 alpha shape。参数单位与点云相同，当前点云单位为米。
   alpha_max_circumradius: 0.80
