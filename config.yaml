@@ -19,7 +19,7 @@ review_crop:
   # 输出选中隔板附近的原始点云，便于在 CloudCompare 中检查选面是否正确。
   horizontal_margin: 0.25
   vertical_margin: 0.25
-  normal_margin: 0.15
+  normal_margin: 0.30
 
 plane_detection:
   # 只用于 RANSAC 平面搜索，最终面积统计仍扫描原始点云。
@@ -44,8 +44,8 @@ grouping:
   end_group_mode: auto
   remove_end_groups: null
   pair_min_separation: 0.03
-  # 采砂船钢板/加强隔板的前后面距离。若你的船体隔板更厚，按实际值放宽。
-  pair_max_separation: 0.25
+  # 当前船的隔板可能超过 1 m，不能用薄钢板默认值过滤第二个面。
+  pair_max_separation: 3.0
   pair_min_overlap: 0.35
   max_partitions: 8
 
@@ -55,10 +55,10 @@ selection:
   evaluate_max_candidates: 12
   preferred_axis: y
   # 由这份船的整体平面位置给出的弱位置先验。改换船或坐标系时留空。
-  position_hint: -31.65
+  position_hint: -30.70
   position_hint_scale: 2.0
   position_hint_bonus: 500.0
-  require_paired_faces: false
+  require_paired_faces: true
   paired_face_bonus: 100.0
   hole_area_weight: 1000.0
   hole_count_weight: 25.0
