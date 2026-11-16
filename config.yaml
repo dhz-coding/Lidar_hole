@@ -43,7 +43,8 @@ grouping:
   # 这个“组”可能包含端墙的正反两个面，不能按原始平面数量删除。
   end_group_mode: auto
   remove_end_groups: null
-  pair_min_separation: 0.03
+  # 当前目标是厚隔板，前后面间距小于 1 m 的结构不参与本次配对。
+  pair_min_separation: 1.0
   # 当前船的隔板可能超过 1 m，不能用薄钢板默认值过滤第二个面。
   pair_max_separation: 6.0
   pair_min_overlap: 0.35
@@ -69,7 +70,7 @@ hole:
   grid_size: 0.04
   boundary_margin: 0.12
   occupied_min_points: 1
-  closing_radius_cells: 3
+  closing_radius_cells: 1
   min_hole_cells: 100
   max_hole_cells: 200000
   min_boundary_support_ratio: 0.15
@@ -83,7 +84,7 @@ hole:
   alpha_max_edge_length: 1.00
   alpha_max_input_points: 8000
   min_alpha_to_hull_ratio: 0.95
-  outer_mode: auto
+  outer_mode: bbox
 
   # 成对平面可直接得到厚度。单面候选才会使用下面这个配置值。
   single_face_default_thickness: 0.08
