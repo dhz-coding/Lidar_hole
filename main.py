@@ -394,6 +394,26 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
         f"rough_total_volume_m3: {report.get('rough_total_volume_m3', report['total_volume_m3']):.6f}",
         "outputs: partition_face_01.pcd, partition_face_02.pcd or partition_face_02_estimated.pcd, partition_plane_group.pcd, partition_slab_points.pcd",
     ]
+    for hole in report.get("holes", []):
+        if hole.get("excluded_by_area", False):
+            continue
+        source = Path(hole["voxel_output"])
+        if source.exists():
+            hole_cloud = BinaryPcd(source)
+            bbox_min, bbox_max = hole_cloud.bounds()
+            size = bbox_max - bbox_min
+            log_lines.append(
+                f"hole_{int(hole['hole_index']):02d}_bbox_min: "
+                f"[{bbox_min[0]:.6f}, {bbox_min[1]:.6f}, {bbox_min[2]:.6f}]"
+            )
+            log_lines.append(
+                f"hole_{int(hole['hole_index']):02d}_bbox_max: "
+                f"[{bbox_max[0]:.6f}, {bbox_max[1]:.6f}, {bbox_max[2]:.6f}]"
+            )
+            log_lines.append(
+                f"hole_{int(hole['hole_index']):02d}_size_xyz_m: "
+                f"[{size[0]:.6f}, {size[1]:.6f}, {size[2]:.6f}]"
+            )
     (run_dir / "run.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
 
 
