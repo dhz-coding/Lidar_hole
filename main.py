@@ -326,6 +326,12 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
     raw_crop = selected_dir / "partition_crop_raw.pcd"
     if raw_crop.exists():
         shutil.copy2(raw_crop, run_dir / "partition_slab_points.pcd")
+    for hole in report.get("holes", []):
+        if hole.get("excluded_by_area", False):
+            continue
+        source = Path(hole["voxel_output"])
+        if source.exists():
+            shutil.copy2(source, run_dir / f"hole_{int(hole['hole_index']):02d}_pseudo_points.pcd")
 
     for path in run_dir.rglob("*.pcd"):
         if path.parent == run_dir and path.name in {
@@ -335,6 +341,8 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
             "partition_plane_group.pcd",
             "partition_slab_points.pcd",
         }:
+            continue
+        if path.parent == run_dir and path.name.startswith("hole_") and path.name.endswith("_pseudo_points.pcd"):
             continue
         path.unlink()
     for path in sorted(run_dir.glob("candidate_*")):
@@ -352,6 +360,9 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
         f"thickness_m: {report['thickness_m']:.6f}",
         f"thickness_source: {report['thickness_source']}",
         f"hole_count: {report['hole_count']}",
+        f"kept_hole_count: {sum(not item.get('excluded_by_area', False) for item in report['holes'])}",
+        f"excluded_hole_count: {sum(item.get('excluded_by_area', False) for item in report['holes'])}",
+        f"exclude_area_m2: {config.get('hole', {}).get('exclude_area_m2', 1.0)}",
         f"total_volume_m3: {report['total_volume_m3']:.6f}",
         "outputs: partition_face_01.pcd, partition_face_02.pcd or partition_face_02_estimated.pcd, partition_plane_group.pcd, partition_slab_points.pcd",
     ]
@@ -452,10 +463,18 @@ def analyse_candidate(
     combined_hole_mask = np.zeros_like(hole_mask, dtype=bool)
     hole_reports = []
     total_volume = 0.0
+    exclude_area_m2 = float(hole_cfg.get("exclude_area_m2", 1.0))
+    exclude_rule = str(hole_cfg.get("exclude_area_rule", "less_equal")).lower()
     for hole_index, component in enumerate(components, start=1):
         combined_hole_mask[component.cells[:, 0], component.cells[:, 1]] = True
         volume = component.area * thickness
-        total_volume += volume
+        excluded = (
+            component.area <= exclude_area_m2
+            if exclude_rule in {"less_equal", "le", "below"}
+            else component.area >= exclude_area_m2
+        )
+        if not excluded:
+            total_volume += volume
         hole_points = _cells_to_points(
             component.cells,
             u_centers,
@@ -474,6 +493,8 @@ def analyse_candidate(
                 "area_m2": float(component.area),
                 "thickness_m": thickness,
                 "volume_m3": float(volume),
+                "excluded_by_area": bool(excluded),
+                "exclude_area_m2": exclude_area_m2,
                 "boundary_support_ratio": component.boundary_support_ratio,
                 "touches_outer_boundary": component.touches_outer_boundary,
                 "uv_bbox": [

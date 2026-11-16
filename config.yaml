@@ -45,7 +45,7 @@ grouping:
   remove_end_groups: null
   pair_min_separation: 0.03
   # 当前船的隔板可能超过 1 m，不能用薄钢板默认值过滤第二个面。
-  pair_max_separation: 3.0
+  pair_max_separation: 6.0
   pair_min_overlap: 0.35
   max_partitions: 8
 
@@ -88,6 +88,9 @@ hole:
   # 成对平面可直接得到厚度。单面候选才会使用下面这个配置值。
   single_face_default_thickness: 0.08
   volume_voxel_size: 0.04
+  # 洞口截面积单位为 m²，默认排除面积小于等于 1 m² 的洞。
+  exclude_area_m2: 1.0
+  exclude_area_rule: less_equal
 
 debug:
   print_components: false
