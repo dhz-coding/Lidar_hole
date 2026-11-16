@@ -34,6 +34,8 @@ plane_detection:
   min_plane_points: 500
   max_face_points: 30000
   seed: 7
+  plane_refine_band: 0.08
+  plane_refine_max_points: 250000
 
 grouping:
   # 同一物理平面的碎片合并距离。隔板前后两个面必须大于这个距离。

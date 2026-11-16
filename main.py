@@ -211,6 +211,33 @@ def _candidate_face_positions(candidate: PartitionCandidate, default_thickness: 
     return position - default_thickness / 2.0, position + default_thickness / 2.0, "configured_single_face_thickness"
 
 
+def _refine_plane_from_raw(reader: BinaryPcd, model: np.ndarray, axis: np.ndarray, config: Mapping[str, object]) -> np.ndarray:
+    """Refine a sampled RANSAC plane with all nearby raw XYZ points using TLS."""
+    plane_cfg = config.get("plane_detection", {})
+    band = float(plane_cfg.get("plane_refine_band", 0.08))
+    max_points = int(plane_cfg.get("plane_refine_max_points", 250_000))
+    chunks = []
+    for chunk in reader.iter_chunks(("x", "y", "z"), int(config.get("io", {}).get("chunk_points", 1_000_000))):
+        xyz = np.column_stack((chunk["x"], chunk["y"], chunk["z"])).astype(np.float64, copy=False)
+        finite = np.isfinite(xyz).all(axis=1)
+        xyz = xyz[finite]
+        keep = np.abs(xyz @ model[:3] + model[3]) <= band
+        if np.any(keep):
+            chunks.append(xyz[keep])
+    if not chunks:
+        return model
+    points = np.vstack(chunks)
+    if len(points) > max_points:
+        rng = np.random.default_rng(7)
+        points = points[rng.choice(len(points), size=max_points, replace=False)]
+    center = points.mean(axis=0)
+    _, _, vh = np.linalg.svd(points - center, full_matrices=False)
+    normal = vh[-1]
+    if np.dot(normal, axis) < 0:
+        normal = -normal
+    return np.r_[normal, -float(np.dot(normal, center))]
+
+
 def _cells_to_points(
     cells: np.ndarray,
     u_centers: np.ndarray,
@@ -386,6 +413,26 @@ def analyse_candidate(
     vertical = AXIS_VECTORS[vertical_axis_name]
     normal, horizontal, vertical_in_plane = orthogonal_basis(candidate.axis, vertical)
 
+    refined_models = [
+        _refine_plane_from_raw(reader, group.members[0].model, candidate.axis, config)
+        for group in candidate.face_groups
+    ]
+    refined_positions = [
+        -float(model[3]) / max(float(np.dot(model[:3], candidate.axis)), 1e-9)
+        for model in refined_models
+    ]
+    if len(refined_positions) >= 2:
+        s_low = min(refined_positions)
+        s_high = max(refined_positions)
+        thickness_source = "refined_raw_plane_pair"
+    else:
+        s_low, s_high, thickness_source = _candidate_face_positions(
+            candidate, float(hole_cfg.get("single_face_default_thickness", 0.25))
+        )
+    thickness = float(s_high - s_low)
+    if thickness <= 0:
+        raise ValueError("重拟合后的隔板面顺序或厚度无效")
+
     boundary_points = candidate.boundary_points
     boundary_u = boundary_points @ horizontal
     boundary_v = boundary_points @ vertical_in_plane
@@ -407,7 +454,7 @@ def analyse_candidate(
         mode=str(hole_cfg.get("outer_mode", "auto")),
         seed=int(config.get("plane_detection", {}).get("seed", 7)),
     )
-    face_models = candidate.face_models
+    face_models = refined_models
     occupied_counts = _accumulate_face_occupancy(
         reader,
         face_models=face_models,
@@ -434,9 +481,6 @@ def analyse_candidate(
         ),
     )
 
-    default_thickness = float(hole_cfg.get("single_face_default_thickness", 0.25))
-    s_low, s_high, thickness_source = _candidate_face_positions(candidate, default_thickness)
-    thickness = float(s_high - s_low)
     volume_voxel_size = float(hole_cfg.get("volume_voxel_size", grid_size))
     layers = max(1, int(math.ceil(thickness / max(volume_voxel_size, 1e-6))))
     s_values = s_low + (np.arange(layers, dtype=np.float64) + 0.5) * thickness / layers
