@@ -10,7 +10,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
+import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -294,6 +297,67 @@ def _candidate_to_dict(candidate: PartitionCandidate) -> dict:
     }
 
 
+def _code_version() -> str:
+    try:
+        value = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).parent,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return value or "nogit"
+    except Exception:
+        return "nogit"
+
+
+def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: dict, config: Mapping[str, object]) -> None:
+    selected_dir = Path(report["outputs"]["candidate_dir"])
+    if selected_dir is None:
+        raise RuntimeError("没有找到候选输出目录")
+
+    face_groups = candidate.face_groups
+    for index, group in enumerate(face_groups[:2], start=1):
+        write_xyz_pcd(run_dir / f"partition_face_{index:02d}.pcd", group.points)
+    if len(face_groups) == 1:
+        estimated = face_groups[0].points + candidate.axis[None, :] * float(report["thickness_m"])
+        write_xyz_pcd(run_dir / "partition_face_02_estimated.pcd", estimated)
+    write_xyz_pcd(run_dir / "partition_plane_group.pcd", candidate.boundary_points)
+
+    raw_crop = selected_dir / "partition_crop_raw.pcd"
+    if raw_crop.exists():
+        shutil.copy2(raw_crop, run_dir / "partition_slab_points.pcd")
+
+    for path in run_dir.rglob("*.pcd"):
+        if path.parent == run_dir and path.name in {
+            "partition_face_01.pcd",
+            "partition_face_02.pcd",
+            "partition_face_02_estimated.pcd",
+            "partition_plane_group.pcd",
+            "partition_slab_points.pcd",
+        }:
+            continue
+        path.unlink()
+    for path in sorted(run_dir.glob("candidate_*")):
+        if path.is_dir():
+            shutil.rmtree(path)
+    for path in run_dir.glob("*.json"):
+        path.unlink()
+    log_lines = [
+        f"code_version: {_code_version()}",
+        f"generated_at: {datetime.now().astimezone().isoformat()}",
+        f"input_pcd: {config['paths']['input_pcd']}",
+        f"selected_axis: {candidate.axis_name}",
+        f"selected_groups: {candidate.group_ids}",
+        f"selected_position_m: {candidate.position:.6f}",
+        f"thickness_m: {report['thickness_m']:.6f}",
+        f"thickness_source: {report['thickness_source']}",
+        f"hole_count: {report['hole_count']}",
+        f"total_volume_m3: {report['total_volume_m3']:.6f}",
+        "outputs: partition_face_01.pcd, partition_face_02.pcd or partition_face_02_estimated.pcd, partition_plane_group.pcd, partition_slab_points.pcd",
+    ]
+    (run_dir / "run.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+
+
 def analyse_candidate(
     reader: BinaryPcd,
     candidate: PartitionCandidate,
@@ -568,8 +632,10 @@ def main() -> int:
     config, _ = load_config(args.config)
     paths = config["paths"]
     input_path = Path(paths["input_pcd"])
-    output_dir = Path(paths["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_root = Path(paths["output_dir"])
+    output_root.mkdir(parents=True, exist_ok=True)
+    run_dir = output_root / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_v{_code_version()}"
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     if not input_path.exists():
         raise FileNotFoundError(f"输入点云不存在: {input_path}")
@@ -582,8 +648,8 @@ def main() -> int:
     print(f"检测样本={len(sample)}, 法向字段={'有' if normals is not None else '无'}")
 
     axis_results, candidates = _detect_all_axes(sample, normals, config)
-    report = build_report(reader, bounds, sample, axis_results, [], output_dir)
-    with (output_dir / "plane_detection_report.json").open("w", encoding="utf-8") as stream:
+    report = build_report(reader, bounds, sample, axis_results, [], run_dir)
+    with (run_dir / "plane_detection_report.json").open("w", encoding="utf-8") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
 
     if args.candidate_index == -1:
@@ -620,7 +686,7 @@ def main() -> int:
 
     selected_reports = []
     for index, candidate in enumerate(selected_candidates):
-        selected_reports.append(analyse_candidate(reader, candidate, config, output_dir, index))
+        selected_reports.append(analyse_candidate(reader, candidate, config, run_dir, index))
 
     if selection_mode == "auto_hole_evidence" and selected_reports:
         best_index = int(np.argmax([item["selection_score"] for item in selected_reports]))
@@ -633,9 +699,11 @@ def main() -> int:
         )
     report["selection_mode"] = selection_mode
     report["selected_candidates"] = selected_reports
-    with (output_dir / "hole_volume_report.json").open("w", encoding="utf-8") as stream:
+    with (run_dir / "hole_volume_report.json").open("w", encoding="utf-8") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
-    print(f"\n结果已写入: {output_dir / 'hole_volume_report.json'}")
+    best_index = int(report.get("auto_selected_candidate_index", 0))
+    _finalize_run_outputs(run_dir, selected_candidates[best_index], selected_reports[best_index], config)
+    print(f"\n结果已写入: {run_dir}")
     return 0
 
 

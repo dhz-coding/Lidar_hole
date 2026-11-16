@@ -3,7 +3,7 @@
 
 paths:
   input_pcd: "E:/work-lidar/base/data/boat2/整体/before/boat2_1_colorized.pcd"
-  output_dir: "./output/boat2_1"
+  output_dir: "E:/work-lidar/partition_hole_volume/output"
 
 coordinate:
   # 点云已经使用船体坐标时保持 x/y/z。若方向不同，先在这里改轴向。
