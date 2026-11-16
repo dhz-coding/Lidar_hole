@@ -1,0 +1,95 @@
+# 隔板空洞体积计算项目配置
+# 相对路径以本 YAML 所在目录为基准，输入点云路径可直接写绝对路径。
+
+paths:
+  input_pcd: "E:/work-lidar/base/data/boat2/整体/before/boat2_1_colorized.pcd"
+  output_dir: "./output/boat2_1"
+
+coordinate:
+  # 点云已经使用船体坐标时保持 x/y/z。若方向不同，先在这里改轴向。
+  vertical_axis: z
+  # auto 会分别检查 x、y 法向平面，并按内部候选评分选择。
+  target_normal_axis: auto
+
+io:
+  # 大点云按块读取，避免把二进制 PCD 再复制一份到内存。
+  chunk_points: 1000000
+
+review_crop:
+  # 输出选中隔板附近的原始点云，便于在 CloudCompare 中检查选面是否正确。
+  horizontal_margin: 0.25
+  vertical_margin: 0.25
+  normal_margin: 0.15
+
+plane_detection:
+  # 只用于 RANSAC 平面搜索，最终面积统计仍扫描原始点云。
+  sample_max_points: 400000
+  use_input_normals: true
+  normal_angle_deg: 22.0
+  min_candidate_points: 2000
+  ransac_distance_threshold: 0.012
+  ransac_n: 3
+  num_iterations: 3000
+  max_planes: 28
+  min_plane_points: 500
+  max_face_points: 30000
+  seed: 7
+
+grouping:
+  # 同一物理平面的碎片合并距离。隔板前后两个面必须大于这个距离。
+  face_merge_distance: 0.04
+  min_face_bbox_overlap: 0.00
+  # auto 在有至少三个平面组时去掉位置最外侧的一个组。
+  # 这个“组”可能包含端墙的正反两个面，不能按原始平面数量删除。
+  end_group_mode: auto
+  remove_end_groups: null
+  pair_min_separation: 0.03
+  # 采砂船钢板/加强隔板的前后面距离。若你的船体隔板更厚，按实际值放宽。
+  pair_max_separation: 0.25
+  pair_min_overlap: 0.35
+  max_partitions: 8
+
+selection:
+  # auto 会先评估若干候选的空白连通域，再优先选择有孔洞证据的候选。
+  mode: auto_hole_evidence
+  evaluate_max_candidates: 12
+  preferred_axis: y
+  # 由这份船的整体平面位置给出的弱位置先验。改换船或坐标系时留空。
+  position_hint: -31.65
+  position_hint_scale: 2.0
+  position_hint_bonus: 500.0
+  require_paired_faces: false
+  paired_face_bonus: 100.0
+  hole_area_weight: 1000.0
+  hole_count_weight: 25.0
+
+hole:
+  # 隔板面点带，用于扫描全量点云的二维占据栅格。
+  face_band: 0.06
+  grid_size: 0.04
+  boundary_margin: 0.12
+  occupied_min_points: 1
+  closing_radius_cells: 3
+  min_hole_cells: 100
+  max_hole_cells: 200000
+  min_boundary_support_ratio: 0.15
+  min_boundary_support_cells: 8
+  # 采砂船隔板下缘的开口可能与外轮廓相接。此时允许边界连通域参与候选，
+  # 仍要求它有足够实体边界支持。
+  reject_touching_outer_boundary: false
+
+  # 外轮廓默认使用 alpha shape。参数单位与点云相同，当前点云单位为米。
+  alpha_max_circumradius: 0.80
+  alpha_max_edge_length: 1.00
+  alpha_max_input_points: 8000
+  min_alpha_to_hull_ratio: 0.95
+  outer_mode: auto
+
+  # 成对平面可直接得到厚度。单面候选才会使用下面这个配置值。
+  single_face_default_thickness: 0.08
+  volume_voxel_size: 0.04
+
+debug:
+  print_components: false
+  write_grid_png: true
+
