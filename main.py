@@ -360,6 +360,10 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
         target = run_dir / f"hole_{int(hole['hole_index']):02d}_pseudo_points.pcd"
         if source.exists():
             shutil.copy2(source, target)
+        cuboid_source = Path(hole["cuboid_output"])
+        cuboid_target = run_dir / f"hole_{int(hole['hole_index']):02d}_cuboid_vertices.pcd"
+        if cuboid_source.exists():
+            shutil.copy2(cuboid_source, cuboid_target)
 
     for path in run_dir.rglob("*.pcd"):
         if path.parent == run_dir and path.name in {
@@ -371,6 +375,8 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
         }:
             continue
         if path.parent == run_dir and path.name.startswith("hole_") and path.name.endswith("_pseudo_points.pcd"):
+            continue
+        if path.parent == run_dir and path.name.startswith("hole_") and path.name.endswith("_cuboid_vertices.pcd"):
             continue
         path.unlink()
     for path in sorted(run_dir.glob("candidate_*")):
@@ -414,6 +420,14 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
             log_lines.append(
                 f"hole_{int(hole['hole_index']):02d}_size_xyz_m: "
                 f"[{size[0]:.6f}, {size[1]:.6f}, {size[2]:.6f}]"
+            )
+            log_lines.append(
+                f"hole_{int(hole['hole_index']):02d}_cuboid_lwh_m: "
+                f"[{hole['cuboid_length_m']:.6f}, {hole['cuboid_thickness_m']:.6f}, {hole['cuboid_height_m']:.6f}]"
+            )
+            log_lines.append(
+                f"hole_{int(hole['hole_index']):02d}_cuboid_volume_m3: "
+                f"{hole['cuboid_volume_m3']:.6f}"
             )
     (run_dir / "run.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
 
@@ -534,15 +548,6 @@ def analyse_candidate(
     exclude_rule = str(hole_cfg.get("exclude_area_rule", "less_equal")).lower()
     for hole_index, component in enumerate(components, start=1):
         combined_hole_mask[component.cells[:, 0], component.cells[:, 1]] = True
-        volume = component.area * thickness
-        rough_total_volume += volume
-        excluded = (
-            component.area <= exclude_area_m2
-            if exclude_rule in {"less_equal", "le", "below"}
-            else component.area >= exclude_area_m2
-        )
-        if not excluded:
-            total_volume += volume
         hole_points = _cells_to_points(
             component.cells,
             u_centers,
@@ -554,6 +559,31 @@ def analyse_candidate(
         )
         hole_path = candidate_dir / f"hole_{hole_index:02d}_volume_voxels.pcd"
         write_xyz_pcd(hole_path, hole_points)
+        u_min = float(u_centers[component.cells[:, 0]].min() - grid_size / 2.0)
+        u_max = float(u_centers[component.cells[:, 0]].max() + grid_size / 2.0)
+        v_min = float(v_centers[component.cells[:, 1]].min() - grid_size / 2.0)
+        v_max = float(v_centers[component.cells[:, 1]].max() + grid_size / 2.0)
+        cuboid_length = u_max - u_min
+        cuboid_height = v_max - v_min
+        cuboid_volume = cuboid_length * cuboid_height * thickness
+        volume = cuboid_volume
+        rough_total_volume += volume
+        excluded = (
+            component.area <= exclude_area_m2
+            if exclude_rule in {"less_equal", "le", "below"}
+            else component.area >= exclude_area_m2
+        )
+        if not excluded:
+            total_volume += volume
+        cuboid_vertices = []
+        for s in (s_low, s_high):
+            for vv in (v_min, v_max):
+                for uu in (u_min, u_max):
+                    cuboid_vertices.append(
+                        horizontal * uu + vertical_in_plane * vv + normal * s
+                    )
+        cuboid_path = candidate_dir / f"hole_{hole_index:02d}_cuboid_vertices.pcd"
+        write_xyz_pcd(cuboid_path, np.asarray(cuboid_vertices, dtype=np.float32))
         hole_reports.append(
             {
                 "hole_index": hole_index,
@@ -561,6 +591,10 @@ def analyse_candidate(
                 "area_m2": float(component.area),
                 "thickness_m": thickness,
                 "volume_m3": float(volume),
+                "cuboid_length_m": float(cuboid_length),
+                "cuboid_height_m": float(cuboid_height),
+                "cuboid_thickness_m": float(thickness),
+                "cuboid_volume_m3": float(cuboid_volume),
                 "excluded_by_area": bool(excluded),
                 "exclude_area_m2": exclude_area_m2,
                 "boundary_support_ratio": component.boundary_support_ratio,
@@ -576,6 +610,7 @@ def analyse_candidate(
                     ],
                 ],
                 "voxel_output": str(hole_path),
+                "cuboid_output": str(cuboid_path),
             }
         )
 

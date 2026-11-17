@@ -95,6 +95,7 @@ hole:
   # 洞口截面积单位为 m²，默认排除面积小于等于 1 m² 的洞。
   exclude_area_m2: 1.0
   exclude_area_rule: less_equal
+  volume_method: cuboid_bbox
 
 debug:
   print_components: false
