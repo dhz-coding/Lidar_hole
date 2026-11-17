@@ -13,6 +13,7 @@ import math
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -754,6 +755,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    total_start = time.perf_counter()
     config, _ = load_config(args.config)
     paths = config["paths"]
     input_path = Path(paths["input_pcd"])
@@ -765,14 +767,18 @@ def main() -> int:
     if not input_path.exists():
         raise FileNotFoundError(f"输入点云不存在: {input_path}")
     print(f"读取 PCD 头: {input_path}")
+    stage_start = time.perf_counter()
     reader = BinaryPcd(input_path)
     print(f"点数={reader.point_count}, 字段={reader.field_names}")
     bounds = reader.bounds(int(config.get("io", {}).get("chunk_points", 1_000_000)))
     print(f"全云范围 min={bounds[0]}, max={bounds[1]}")
     sample, normals = _build_sample(reader, config)
     print(f"检测样本={len(sample)}, 法向字段={'有' if normals is not None else '无'}")
+    read_seconds = time.perf_counter() - stage_start
 
+    stage_start = time.perf_counter()
     axis_results, candidates = _detect_all_axes(sample, normals, config)
+    detect_seconds = time.perf_counter() - stage_start
     report = build_report(reader, bounds, sample, axis_results, [], run_dir)
     with (run_dir / "plane_detection_report.json").open("w", encoding="utf-8") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
@@ -810,8 +816,10 @@ def main() -> int:
             selected_candidates = candidates_for_evaluation[:max_evaluate]
 
     selected_reports = []
+    stage_start = time.perf_counter()
     for index, candidate in enumerate(selected_candidates):
         selected_reports.append(analyse_candidate(reader, candidate, config, run_dir, index))
+    analyse_seconds = time.perf_counter() - stage_start
 
     if selection_mode == "auto_hole_evidence" and selected_reports:
         best_index = int(np.argmax([item["selection_score"] for item in selected_reports]))
@@ -827,7 +835,19 @@ def main() -> int:
     with (run_dir / "hole_volume_report.json").open("w", encoding="utf-8") as stream:
         json.dump(report, stream, ensure_ascii=False, indent=2)
     best_index = int(report.get("auto_selected_candidate_index", 0))
+    stage_start = time.perf_counter()
     _finalize_run_outputs(run_dir, selected_candidates[best_index], selected_reports[best_index], config)
+    finalize_seconds = time.perf_counter() - stage_start
+    total_seconds = time.perf_counter() - total_start
+    timing_lines = [
+        f"timing_read_and_sample_seconds: {read_seconds:.3f}",
+        f"timing_plane_detection_seconds: {detect_seconds:.3f}",
+        f"timing_hole_analysis_seconds: {analyse_seconds:.3f}",
+        f"timing_finalize_seconds: {finalize_seconds:.3f}",
+        f"timing_total_seconds: {total_seconds:.3f}",
+    ]
+    with (run_dir / "run.log").open("a", encoding="utf-8") as log_stream:
+        log_stream.write("\n".join(timing_lines) + "\n")
     print(f"\n结果目录: {run_dir}")
     print(f"日志文件: {run_dir / 'run.log'}")
     print((run_dir / "run.log").read_text(encoding="utf-8"))
