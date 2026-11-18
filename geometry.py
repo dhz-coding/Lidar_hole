@@ -18,6 +18,9 @@ class HoleComponent:
     area: float
     boundary_support_ratio: float
     touches_outer_boundary: bool
+    rectangularity: float = 0.0
+    solidity: float = 0.0
+    aspect_ratio: float = 0.0
 
 
 def normalize(vector: np.ndarray, fallback: np.ndarray | None = None) -> np.ndarray:
@@ -269,6 +272,9 @@ def find_hole_components(
     closing_radius_cells: int = 1,
     debug_components: bool = False,
     reject_touching_outer_boundary: bool = True,
+    min_rectangularity: float = 0.0,
+    min_solidity: float = 0.0,
+    max_aspect_ratio: float = float("inf"),
 ) -> tuple[list[HoleComponent], np.ndarray, np.ndarray]:
     """Find enclosed empty components inside the inferred panel outline."""
 
@@ -297,17 +303,38 @@ def find_hole_components(
         boundary_size = max(int(np.count_nonzero(boundary)), 1)
         support_ratio = support / boundary_size
         touches_outer = bool(np.any(boundary & ~outer_mask) or np.any(component_mask & outer_boundary))
+        row_span = int(cells[:, 0].max() - cells[:, 0].min() + 1)
+        column_span = int(cells[:, 1].max() - cells[:, 1].min() + 1)
+        bbox_cells = max(row_span * column_span, 1)
+        rectangularity = float(size / bbox_cells)
+        aspect_ratio = float(max(row_span, column_span) / max(min(row_span, column_span), 1))
+        if len(cells) >= 3:
+            try:
+                hull = ConvexHull(cells.astype(np.float64))
+                hull_area = max(float(hull.volume), 1.0)
+            except QhullError:
+                hull_area = float(size)
+        else:
+            hull_area = float(size)
+        solidity = float(min(size / hull_area, 1.0))
         if debug_components:
             print(
                 f"    空白连通域 label={component_label}, cells={size}, "
                 f"support={support}/{boundary_size} ({support_ratio:.3f}), "
-                f"touches_outer={touches_outer}"
+                f"touches_outer={touches_outer}, rectangularity={rectangularity:.3f}, "
+                f"solidity={solidity:.3f}, aspect={aspect_ratio:.3f}"
             )
         if support < min_boundary_support_cells:
             continue
         if support_ratio < min_boundary_support_ratio:
             continue
         if reject_touching_outer_boundary and touches_outer:
+            continue
+        if rectangularity < min_rectangularity:
+            continue
+        if solidity < min_solidity:
+            continue
+        if aspect_ratio > max_aspect_ratio:
             continue
 
         hole_mask[component_mask] = True
@@ -318,6 +345,9 @@ def find_hole_components(
                 area=float(size * grid_size * grid_size),
                 boundary_support_ratio=float(support_ratio),
                 touches_outer_boundary=touches_outer,
+                rectangularity=rectangularity,
+                solidity=solidity,
+                aspect_ratio=aspect_ratio,
             )
         )
 

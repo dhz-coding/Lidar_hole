@@ -6,10 +6,9 @@ paths:
   output_dir: "E:/work-lidar/partition_hole_volume/output"
 
 coordinate:
-  # 点云已经使用船体坐标时保持 x/y/z。若方向不同，先在这里改轴向。
+  # 仅保留竖直方向的配置。隔板法向由平面配对自动得到。
   vertical_axis: z
-  # auto 会分别检查 x、y 法向平面，并按内部候选评分选择。
-  target_normal_axis: auto
+  target_normal_axis: free_normal
 
 io:
   # 大点云按块读取，避免把二进制 PCD 再复制一份到内存。
@@ -22,10 +21,10 @@ review_crop:
   normal_margin: 0.30
 
 plane_detection:
-  # 只用于 RANSAC 平面搜索，最终面积统计仍扫描原始点云。
+  # RANSAC 在全方向搜索主要平面，不再按全局 x/y 轴预筛选。
   sample_max_points: 400000
-  use_input_normals: true
-  normal_angle_deg: 22.0
+  use_input_normals: false
+  normal_angle_deg: 180.0
   min_candidate_points: 2000
   ransac_distance_threshold: 0.012
   ransac_n: 3
@@ -50,15 +49,19 @@ grouping:
   # 当前船的隔板可能超过 1 m，不能用薄钢板默认值过滤第二个面。
   pair_max_separation: 6.0
   pair_min_overlap: 0.35
+  # 配对平面法向夹角阈值，单位为度。
+  pair_normal_angle_deg: 12.0
+  # 同一物理平面碎片的法向合并阈值，单位为度。
+  normal_merge_angle_deg: 8.0
   max_partitions: 8
 
 selection:
   # auto 会先评估若干候选的空白连通域，再优先选择有孔洞证据的候选。
   mode: auto_hole_evidence
   evaluate_max_candidates: 12
-  preferred_axis: y
-  # 由这份船的整体平面位置给出的弱位置先验。改换船或坐标系时留空。
-  position_hint: -30.70
+  preferred_axis: auto
+  # 不使用依赖全局坐标的平面位置先验。
+  position_hint: null
   position_hint_scale: 2.0
   position_hint_bonus: 500.0
   require_paired_faces: true
@@ -77,6 +80,10 @@ hole:
   max_hole_cells: 200000
   min_boundary_support_ratio: 0.15
   min_boundary_support_cells: 8
+  # 洞口形状约束。指标均由二维栅格连通域计算，不依赖绝对尺寸。
+  min_rectangularity: 0.60
+  min_solidity: 0.60
+  max_aspect_ratio: 8.0
   # 采砂船隔板下缘的开口可能与外轮廓相接。此时允许边界连通域参与候选，
   # 仍要求它有足够实体边界支持。
   # 只计算闭合洞口。与隔板外轮廓相连的大空区不作为洞。

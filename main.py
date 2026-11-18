@@ -24,14 +24,12 @@ import yaml
 from geometry import (
     build_outer_mask,
     find_hole_components,
-    orthogonal_basis,
 )
 from pcd_io import BinaryPcd, write_xyz_pcd
 from plane_detection import (
-    AXIS_VECTORS,
     PartitionCandidate,
     PlaneGroup,
-    extract_planes_for_axis,
+    extract_planes,
     group_plane_faces,
     group_to_dict,
     plane_to_dict,
@@ -86,53 +84,46 @@ def _build_sample(reader: BinaryPcd, config: Mapping[str, object]) -> tuple[np.n
     return xyz, normals
 
 
-def _axis_names(config: Mapping[str, object]) -> list[str]:
-    value = str(config.get("coordinate", {}).get("target_normal_axis", "auto")).lower()
-    if value == "auto":
-        return ["x", "y"]
-    if value not in AXIS_VECTORS or value == "z":
-        raise ValueError("coordinate.target_normal_axis 只能是 auto、x 或 y")
-    return [value]
-
-
 def _detect_all_axes(
     xyz: np.ndarray,
     normals: np.ndarray | None,
     config: Mapping[str, object],
 ) -> tuple[dict[str, dict], list[PartitionCandidate]]:
-    plane_cfg = config.get("plane_detection", {})
     grouping_cfg = config.get("grouping", {})
-    axis_results: dict[str, dict] = {}
-    all_candidates: list[PartitionCandidate] = []
-    for axis_name in _axis_names(config):
-        print(f"\n[平面检测] 目标法向轴 {axis_name}")
-        planes = extract_planes_for_axis(xyz, normals, axis_name, plane_cfg)
-        groups = group_plane_faces(
-            planes,
-            face_merge_distance=float(grouping_cfg.get("face_merge_distance", 0.08)),
-            min_bbox_overlap=float(grouping_cfg.get("min_face_bbox_overlap", 0.25)),
-        )
-        candidates = select_partition_candidates(groups, grouping_cfg)
-        axis_results[axis_name] = {
+    plane_cfg = config.get("plane_detection", {})
+    print("\n[平面检测] 全方向 RANSAC")
+    planes = extract_planes(xyz, normals, plane_cfg)
+    groups = group_plane_faces(
+        planes,
+        face_merge_distance=float(grouping_cfg.get("face_merge_distance", 0.08)),
+        min_bbox_overlap=float(grouping_cfg.get("min_face_bbox_overlap", 0.25)),
+        normal_merge_angle_deg=float(grouping_cfg.get("normal_merge_angle_deg", 8.0)),
+    )
+    candidates = select_partition_candidates(groups, grouping_cfg)
+    axis_results: dict[str, dict] = {
+        "free_normal": {
             "planes": planes,
             "groups": groups,
             "candidates": candidates,
         }
-        all_candidates.extend(candidates)
-        print(f"  提取平面 {len(planes)} 个，平面组 {len(groups)} 个，候选隔板 {len(candidates)} 个")
-        for group in groups:
-            print(
-                f"  组 {group.group_id}: position={group.position:.4f}, "
-                f"members={[member.plane_id for member in group.members]}, "
-                f"extent={group.projected_extent.tolist()}"
-            )
-        for candidate in candidates:
-            print(
-                f"  候选 {candidate.group_ids}: score={candidate.score:.3f}, "
-                f"thickness={candidate.thickness}, reason={candidate.reason}"
-            )
+    }
+    all_candidates = list(candidates)
+    print(f"  提取平面 {len(planes)} 个，平面组 {len(groups)} 个，候选横梁 {len(candidates)} 个")
+    for group in groups:
+        print(
+            f"  组 {group.group_id}: position={group.position:.4f}, "
+            f"normal={np.round(group.normal, 4).tolist()}, "
+            f"members={[member.plane_id for member in group.members]}, "
+            f"extent={group.projected_extent.tolist()}"
+        )
+    for candidate in candidates:
+        print(
+            f"  候选 {candidate.group_ids}: score={candidate.score:.3f}, "
+            f"normal={np.round(candidate.axis, 4).tolist()}, "
+            f"thickness={candidate.thickness}, reason={candidate.reason}"
+        )
     if not all_candidates:
-        raise RuntimeError("没有找到内部隔板候选。请检查轴方向、法向阈值和 RANSAC 参数")
+        raise RuntimeError("没有找到由平行平面组成的横梁候选。请检查平面质量、法向夹角和间距范围")
     all_candidates.sort(key=lambda item: item.score, reverse=True)
     return axis_results, all_candidates
 
@@ -325,6 +316,29 @@ def _candidate_to_dict(candidate: PartitionCandidate) -> dict:
     }
 
 
+def _local_section_basis(normal: np.ndarray, points: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build a measurement basis from the paired planes and their points."""
+
+    normal = np.asarray(normal, dtype=np.float64)
+    normal /= max(float(np.linalg.norm(normal)), 1e-12)
+    points = np.asarray(points, dtype=np.float64)
+    projected = points - (points @ normal)[:, None] * normal[None, :]
+    centered = projected - projected.mean(axis=0)
+    _, singular_values, vh = np.linalg.svd(centered, full_matrices=False)
+    if len(vh) == 0 or (len(singular_values) > 1 and singular_values[0] <= 1e-12):
+        references = np.eye(3)
+        reference = references[int(np.argmin(np.abs(references @ normal)))]
+        first = np.cross(normal, reference)
+        first /= max(float(np.linalg.norm(first)), 1e-12)
+    else:
+        first = vh[0]
+        first -= np.dot(first, normal) * normal
+        first /= max(float(np.linalg.norm(first)), 1e-12)
+    second = np.cross(normal, first)
+    second /= max(float(np.linalg.norm(second)), 1e-12)
+    return normal, first, second
+
+
 def _code_version() -> str:
     try:
         value = subprocess.check_output(
@@ -390,6 +404,7 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
         f"generated_at: {datetime.now().astimezone().isoformat()}",
         f"input_pcd: {config['paths']['input_pcd']}",
         f"selected_axis: {candidate.axis_name}",
+        f"selected_normal: [{candidate.axis[0]:.6f}, {candidate.axis[1]:.6f}, {candidate.axis[2]:.6f}]",
         f"selected_groups: {candidate.group_ids}",
         f"selected_position_m: {candidate.position:.6f}",
         f"thickness_m: {report['thickness_m']:.6f}",
@@ -430,6 +445,13 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
                 f"hole_{int(hole['hole_index']):02d}_cuboid_volume_m3: "
                 f"{hole['cuboid_volume_m3']:.6f}"
             )
+            log_lines.append(
+                f"hole_{int(hole['hole_index']):02d}_shape_metrics: "
+                f"rectangularity={hole['rectangularity']:.6f}, "
+                f"solidity={hole['solidity']:.6f}, "
+                f"aspect_ratio={hole['aspect_ratio']:.6f}, "
+                f"boundary_support_ratio={hole['boundary_support_ratio']:.6f}"
+            )
     (run_dir / "run.log").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
 
 
@@ -440,14 +462,12 @@ def analyse_candidate(
     output_dir: Path,
     candidate_index: int,
 ) -> dict:
-    coord_cfg = config.get("coordinate", {})
     hole_cfg = config.get("hole", {})
     grid_size = float(hole_cfg.get("grid_size", 0.04))
     face_band = float(hole_cfg.get("face_band", 0.06))
     boundary_margin = float(hole_cfg.get("boundary_margin", 0.1))
-    vertical_axis_name = str(coord_cfg.get("vertical_axis", "z")).lower()
-    vertical = AXIS_VECTORS[vertical_axis_name]
-    normal, horizontal, vertical_in_plane = orthogonal_basis(candidate.axis, vertical)
+    boundary_points = candidate.boundary_points
+    normal, horizontal, vertical_in_plane = _local_section_basis(candidate.axis, boundary_points)
 
     refined_models = [
         _refine_plane_from_raw(reader, group.members[0].model, candidate.axis, config)
@@ -469,7 +489,6 @@ def analyse_candidate(
     if thickness <= 0:
         raise ValueError("重拟合后的隔板面顺序或厚度无效")
 
-    boundary_points = candidate.boundary_points
     boundary_u = boundary_points @ horizontal
     boundary_v = boundary_points @ vertical_in_plane
     u_low = float(np.min(boundary_u) - boundary_margin)
@@ -515,6 +534,9 @@ def analyse_candidate(
         reject_touching_outer_boundary=bool(
             hole_cfg.get("reject_touching_outer_boundary", True)
         ),
+        min_rectangularity=float(hole_cfg.get("min_rectangularity", 0.60)),
+        min_solidity=float(hole_cfg.get("min_solidity", 0.60)),
+        max_aspect_ratio=float(hole_cfg.get("max_aspect_ratio", 8.0)),
     )
 
     volume_voxel_size = float(hole_cfg.get("volume_voxel_size", grid_size))
@@ -600,6 +622,9 @@ def analyse_candidate(
                 "exclude_area_m2": exclude_area_m2,
                 "boundary_support_ratio": component.boundary_support_ratio,
                 "touches_outer_boundary": component.touches_outer_boundary,
+                "rectangularity": component.rectangularity,
+                "solidity": component.solidity,
+                "aspect_ratio": component.aspect_ratio,
                 "uv_bbox": [
                     [
                         float(u_centers[component.cells[:, 0]].min()),
@@ -797,12 +822,7 @@ def main() -> int:
         if selection_mode == "plane_score":
             selected_candidates = [candidates[0]]
         else:
-            preferred_axis = str(selection_cfg.get("preferred_axis", "auto")).lower()
-            if preferred_axis in AXIS_VECTORS and preferred_axis != "z":
-                preferred = [candidate for candidate in candidates if candidate.axis_name == preferred_axis]
-            else:
-                preferred = list(candidates)
-            candidates_for_evaluation = preferred if preferred else list(candidates)
+            candidates_for_evaluation = list(candidates)
             if bool(selection_cfg.get("require_paired_faces", True)):
                 paired = [candidate for candidate in candidates_for_evaluation if candidate.thickness is not None]
             else:
