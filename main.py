@@ -372,11 +372,11 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
         if hole.get("excluded_by_area", False):
             continue
         source = Path(hole["voxel_output"])
-        target = run_dir / f"hole_{int(hole['hole_index']):02d}_pseudo_points.pcd"
+        target = run_dir / f"hole{int(hole['hole_index'])}_pseudo_points.pcd"
         if source.exists():
             shutil.copy2(source, target)
         cuboid_source = Path(hole["cuboid_output"])
-        cuboid_target = run_dir / f"hole_{int(hole['hole_index']):02d}_cuboid_vertices.pcd"
+        cuboid_target = run_dir / f"hole{int(hole['hole_index'])}_cuboid_vertices.pcd"
         if cuboid_source.exists():
             shutil.copy2(cuboid_source, cuboid_target)
 
@@ -389,12 +389,15 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
             "partition_slab_points.pcd",
         }:
             continue
-        if path.parent == run_dir and path.name.startswith("hole_") and path.name.endswith("_pseudo_points.pcd"):
+        if path.parent == run_dir and path.name.startswith("hole") and path.name.endswith("_pseudo_points.pcd"):
             continue
-        if path.parent == run_dir and path.name.startswith("hole_") and path.name.endswith("_cuboid_vertices.pcd"):
+        if path.parent == run_dir and path.name.startswith("hole") and path.name.endswith("_cuboid_vertices.pcd"):
             continue
         path.unlink()
     for path in sorted(run_dir.glob("candidate_*")):
+        if path.is_dir():
+            shutil.rmtree(path)
+    for path in sorted(run_dir.glob("*.pcd_converted")):
         if path.is_dir():
             shutil.rmtree(path)
     for path in run_dir.glob("*.json"):
@@ -420,33 +423,33 @@ def _finalize_run_outputs(run_dir: Path, candidate: PartitionCandidate, report: 
     for hole in report.get("holes", []):
         if hole.get("excluded_by_area", False):
             continue
-        source = run_dir / f"hole_{int(hole['hole_index']):02d}_pseudo_points.pcd"
+        source = run_dir / f"hole{int(hole['hole_index'])}_pseudo_points.pcd"
         if source.exists():
             hole_cloud = BinaryPcd(source)
             bbox_min, bbox_max = hole_cloud.bounds()
             size = bbox_max - bbox_min
             log_lines.append(
-                f"hole_{int(hole['hole_index']):02d}_bbox_min: "
+                f"hole{int(hole['hole_index'])}_bbox_min: "
                 f"[{bbox_min[0]:.6f}, {bbox_min[1]:.6f}, {bbox_min[2]:.6f}]"
             )
             log_lines.append(
-                f"hole_{int(hole['hole_index']):02d}_bbox_max: "
+                f"hole{int(hole['hole_index'])}_bbox_max: "
                 f"[{bbox_max[0]:.6f}, {bbox_max[1]:.6f}, {bbox_max[2]:.6f}]"
             )
             log_lines.append(
-                f"hole_{int(hole['hole_index']):02d}_size_xyz_m: "
+                f"hole{int(hole['hole_index'])}_pseudo_size_xyz_m: "
                 f"[{size[0]:.6f}, {size[1]:.6f}, {size[2]:.6f}]"
             )
             log_lines.append(
-                f"hole_{int(hole['hole_index']):02d}_cuboid_lwh_m: "
+                f"hole{int(hole['hole_index'])}_cuboid_lwh_m: "
                 f"[{hole['cuboid_length_m']:.6f}, {hole['cuboid_thickness_m']:.6f}, {hole['cuboid_height_m']:.6f}]"
             )
             log_lines.append(
-                f"hole_{int(hole['hole_index']):02d}_cuboid_volume_m3: "
+                f"hole{int(hole['hole_index'])}_cuboid_volume_m3: "
                 f"{hole['cuboid_volume_m3']:.6f}"
             )
             log_lines.append(
-                f"hole_{int(hole['hole_index']):02d}_shape_metrics: "
+                f"hole{int(hole['hole_index'])}_shape_metrics: "
                 f"rectangularity={hole['rectangularity']:.6f}, "
                 f"solidity={hole['solidity']:.6f}, "
                 f"aspect_ratio={hole['aspect_ratio']:.6f}, "
@@ -545,7 +548,7 @@ def analyse_candidate(
 
     candidate_dir = output_dir / f"candidate_{candidate_index:02d}_{candidate.axis_name}"
     candidate_dir.mkdir(parents=True, exist_ok=True)
-    for old_hole in candidate_dir.glob("hole_*_volume_voxels.pcd"):
+    for old_hole in candidate_dir.glob("hole*_volume_voxels.pcd"):
         old_hole.unlink()
     face_points = candidate.boundary_points.astype(np.float32, copy=False)
     write_xyz_pcd(candidate_dir / "partition_face_points.pcd", face_points)
@@ -567,6 +570,7 @@ def analyse_candidate(
     hole_reports = []
     total_volume = 0.0
     rough_total_volume = 0.0
+    kept_output_index = 0
     exclude_area_m2 = float(hole_cfg.get("exclude_area_m2", 1.0))
     exclude_rule = str(hole_cfg.get("exclude_area_rule", "less_equal")).lower()
     for hole_index, component in enumerate(components, start=1):
@@ -580,8 +584,6 @@ def analyse_candidate(
             vertical_in_plane,
             s_values,
         )
-        hole_path = candidate_dir / f"hole_{hole_index:02d}_volume_voxels.pcd"
-        write_xyz_pcd(hole_path, hole_points)
         u_min = float(u_centers[component.cells[:, 0]].min() - grid_size / 2.0)
         u_max = float(u_centers[component.cells[:, 0]].max() + grid_size / 2.0)
         v_min = float(v_centers[component.cells[:, 1]].min() - grid_size / 2.0)
@@ -598,6 +600,10 @@ def analyse_candidate(
         )
         if not excluded:
             total_volume += volume
+            kept_output_index += 1
+        output_index = kept_output_index if not excluded else hole_index
+        hole_path = candidate_dir / f"hole{output_index}_volume_voxels.pcd"
+        write_xyz_pcd(hole_path, hole_points)
         cuboid_vertices = []
         for s in (s_low, s_high):
             for vv in (v_min, v_max):
@@ -605,11 +611,12 @@ def analyse_candidate(
                     cuboid_vertices.append(
                         horizontal * uu + vertical_in_plane * vv + normal * s
                     )
-        cuboid_path = candidate_dir / f"hole_{hole_index:02d}_cuboid_vertices.pcd"
+        cuboid_path = candidate_dir / f"hole{output_index}_cuboid_vertices.pcd"
         write_xyz_pcd(cuboid_path, np.asarray(cuboid_vertices, dtype=np.float32))
         hole_reports.append(
             {
-                "hole_index": hole_index,
+                "hole_index": output_index,
+                "source_component_index": hole_index,
                 "grid_cells": int(len(component.cells)),
                 "area_m2": float(component.area),
                 "thickness_m": thickness,

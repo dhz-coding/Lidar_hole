@@ -44,8 +44,8 @@ python main.py --config config.yaml
 - `partition_face_01.pcd` 和 `partition_face_02.pcd`，配对平面点云。
 - `partition_plane_group.pcd`，候选横梁平面组点云。
 - `partition_slab_points.pcd`，横梁附近原始裁剪点云。
-- `hole_XX_pseudo_points.pcd`，洞口伪体积点云。
-- `hole_XX_cuboid_vertices.pcd`，洞口近似长方体的 8 个顶点。
+- `hole1_pseudo_points.pcd`、`hole2_pseudo_points.pcd`，洞口伪体积点云。
+- `hole1_cuboid_vertices.pcd`、`hole2_cuboid_vertices.pcd`，洞口近似长方体的 8 个顶点。
 - `run.log`，参数、配对法向、厚度、洞口尺寸、形状指标、体积和耗时。
 
 ## 结果边界
